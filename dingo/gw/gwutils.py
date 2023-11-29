@@ -79,7 +79,7 @@ def get_mismatch(a, b, domain, asd_file=None):
 
 
 def get_standardization_dict(
-    extrinsic_prior_dict, wfd, selected_parameters, transform=None
+    extrinsic_prior_dict, wfd, selected_parameters, transform=None, multisource_dict=None
 ):
     """
     Calculates the mean and standard deviation of parameters. This is needed for
@@ -95,6 +95,10 @@ def get_standardization_dict(
         Operator that will generate samples for parameters contained in
         selected_parameters that are not contained in the intrinsic or extrinsic prior.
         (E.g., H1_time, L1_time_proxy)
+    multisource_dict : dict
+        If not None, this is a dictionary with keys "source_names" and values
+        "source_dict", which are used to construct the extrinsic prior for the
+        multisource case.
 
     Returns
     -------
@@ -119,9 +123,30 @@ def get_standardization_dict(
     mean = {**mean_intrinsic, **mean_extrinsic}
     std = {**std_intrinsic, **std_extrinsic}
 
+    # add the params for multiple sources
+    if multisource_dict is not None:
+        for source_name, source_dict in multisource_dict.items():
+            source_params = [param for param in selected_parameters if param.endswith(f"_{source_name}")]
+            for param in source_params:
+                original_param = param.replace(f"_{source_name}", "")
+
+                # if the original param is not already calculated we raise an error
+                if original_param not in mean:
+                    raise NotImplementedError("All multisource params must be in the intrinsic or extrinsic prior")
+
+                # if its the geocentric time we need to shift it by the mean of delta_t
+                delta_mean = 0
+                if original_param == "geocent_time":
+                    delta_prior = BBHExtrinsicPriorDict(source_dict)
+                    delta_mean = delta_prior.mean_std(["delta_t"])[0]["delta_t"]
+
+                mean[param] = mean[original_param] + delta_mean
+                std[param] = std[original_param]
+
     # For all remaining parameters that require standardization, we use the transform
     # to sample these and estimate the mean and standard deviation numerically.
     additional_parameters = [p for p in selected_parameters if p not in mean]
+
     if additional_parameters:
         num_samples = min(100_000, len(wfd.parameters))
         samples = {p: np.empty(num_samples) for p in additional_parameters}

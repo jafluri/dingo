@@ -22,6 +22,8 @@ from dingo.gw.transforms import (
     GNPECoalescenceTimes,
     SampleExtrinsicParameters,
     GetDetectorTimes,
+    SampleExtrinsicMultiSource,
+    AddNewSource,
 )
 from dingo.gw.noise.asd_dataset import ASDDataset
 from dingo.gw.prior import default_inference_parameters
@@ -148,10 +150,25 @@ def set_train_transforms(wfd, data_settings, asd_dataset_path, omit_transforms=N
             wfd,
             data_settings["inference_parameters"] + data_settings["context_parameters"],
             torchvision.transforms.Compose(transforms),
+            multisource_dict=data_settings.get("multiple_sources", None),
         )
         data_settings["standardization"] = standardization_dict
 
+    # project onto detectors
     transforms.append(ProjectOntoDetectors(ifo_list, domain, ref_time))
+
+    # add additional sources
+    if "multiple_sources" in data_settings:
+        # we copy the transforms here to avoid add sources multiple times
+        transforms_copy = transforms.copy()
+        for source_name, source_dict in data_settings["multiple_sources"].items():
+            # copy the transforms list and replace the extrinsic parameters transform
+            transforms_copy[0] = SampleExtrinsicMultiSource(extrinsic_prior_dict, source_dict)
+            source_transform = torchvision.transforms.Compose(transforms_copy)
+            transforms.append(AddNewSource(source_name, wfd, source_transform))
+            print("Adding multiple sources.")
+
+    # whiten and scale strain
     transforms.append(SampleNoiseASD(asd_dataset))
     transforms.append(WhitenAndScaleStrain(domain.noise_std))
     # We typically add white detector noise. For debugging purposes, this can be turned

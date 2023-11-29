@@ -201,12 +201,19 @@ class WaveformDataset(DingoDataset, torch.utils.data.Dataset):
         """The number of waveform samples."""
         return len(self.parameters)
 
-    def __getitem__(self, idx) -> Dict[str, Dict[str, Union[float, np.ndarray]]]:
+    def get_no_transform(self, idx) -> Dict[str, Dict[str, Union[float, np.ndarray]]]:
         """
         Return a nested dictionary containing parameters and waveform polarizations
-        for sample with index `idx`. If defined, a chain of transformations is applied to
-        the waveform data.
+        Parameters
+        ----------
+        idx : int
+            Index of the sample to be returned.
+
+        Returns
+        -------
+        The sample with index `idx` with no transform applied, use __getitem__ for transformed samples.
         """
+
         parameters = self.parameters.iloc[idx].to_dict()
         polarizations = {
             pol: waveforms[idx] for pol, waveforms in self.polarizations.items()
@@ -219,6 +226,18 @@ class WaveformDataset(DingoDataset, torch.utils.data.Dataset):
 
         # Main transforms can depend also on parameters.
         data = {"parameters": parameters, "waveform": polarizations}
+
+        return data
+
+    def __getitem__(self, idx) -> Dict[str, Dict[str, Union[float, np.ndarray]]]:
+        """
+        Return a nested dictionary containing parameters and waveform polarizations
+        for sample with index `idx`. If defined, a chain of transformations is applied to
+        the waveform data.
+        """
+
+        data = self.get_no_transform(idx)
+
         if self.transform is not None:
             data = self.transform(data)
         return data
