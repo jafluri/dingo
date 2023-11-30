@@ -494,7 +494,7 @@ class MultiSourceInjection(Injection):
 
             asd = self.asd
             if asd is not None:
-                sample["asds"] = asd
+                samples["asds"] = asd
 
             # project onto detectors
             sample = self.projection_transforms(sample)
@@ -502,9 +502,9 @@ class MultiSourceInjection(Injection):
             # mash everything together
             if source_name != "":
                 source_name = f"_{source_name}"
-            samples["parameters"].update({f"{p}{source_name}": v for p, v in theta_intrinsic.items()})
+            samples["parameters"].update({f"{p}{source_name}": v for p, v in sample["parameters"].items()})
             samples["extrinsic_parameters"].update({f"{p}{source_name}": v for p, v in theta_extrinsic.items()})
-            samples["waveform"].append(polarizations)
+            samples["waveform"].append(sample["waveform"])
 
         # add all the waveforms together
         samples["waveform"] = {k: sum([v[k] for v in samples["waveform"]]) for k in samples["waveform"][0].keys()}
