@@ -1,14 +1,16 @@
+from typing import List, Dict
+
 import numpy as np
 from bilby.gw.detector import InterferometerList
 from torchvision.transforms import Compose
 
-from dingo.gw.noise.asd_dataset import ASDDataset
 from dingo.gw.domains import (
     FrequencyDomain,
     build_domain,
     build_domain_from_model_metadata,
 )
 from dingo.gw.gwutils import get_extrinsic_prior_dict
+from dingo.gw.noise.asd_dataset import ASDDataset
 from dingo.gw.prior import build_prior_with_defaults, split_off_extrinsic_parameters
 from dingo.gw.transforms import (
     GetDetectorTimes,
@@ -382,3 +384,141 @@ class Injection(GWSignal):
         # ensure that all parameters have the same data type, else it may cause an error
         theta = {key: np.float32(value) for key, value in theta.items()}
         return self.injection(theta)
+
+
+class MultiSourceInjection(Injection):
+    """
+    A class that deal with multiple sources in the same injection.
+    """
+
+    def injection(self, thetas: Dict[str, Dict[str, float]]):
+        """
+        Generate an injection based on specified parameters.
+        Parameters
+        ----------
+        thetas : dict
+            A dictionary of source_name (can be empty string) and parameters for each source.
+
+        Returns
+        -------
+        dict
+            keys:
+                waveform: data (signal + noise) in each detector
+                extrinsic_parameters: {}
+                parameters: waveform parameters
+                asd (if set): amplitude spectral density for each detector
+        """
+
+        signal = self.signal(thetas)
+        try:
+            # Be careful to use the ASD included with the signal, since each time
+            # self.asd is accessed it gives a different ASD (if using an ASD dataset).
+            asd = signal["asds"]
+        except KeyError:
+            raise ValueError("self.asd must be set in order to produce injections.")
+
+        if self.whiten:
+            print("self.whiten was set to True. Resetting to False.")
+            self.whiten = False
+
+        data = {}
+        for ifo, s in signal["waveform"].items():
+            noise = (
+                (np.random.randn(len(s)) + 1j * np.random.randn(len(s)))
+                * asd[ifo]
+                * self.data_domain.noise_std
+            )
+            d = s + noise
+            data[ifo] = self.data_domain.update_data(d, low_value=0.0)
+
+        signal["waveform"] = data
+        return signal
+
+    def _initialize_transform(self):
+        transforms = [
+            GetDetectorTimes(self.ifo_list, self.t_ref),
+            ProjectOntoDetectors(self.ifo_list, self.data_domain, self.t_ref),
+        ]
+        if self.calibration_envelope is not None:
+            transforms.append(
+                ApplyCalibrationUncertainty(
+                    self.ifo_list,
+                    self.data_domain,
+                    self.calibration_envelope,
+                    self.num_calibration_curves,
+                )
+            )
+
+        self.projection_transforms = Compose(transforms)
+        if self.whiten:
+            self.whiten_transform = Compose([WhitenAndScaleStrain(self.data_domain.noise_std)])
+        else:
+            self.whiten_transform = Compose([lambda x: x])
+
+    def signal(self, thetas: Dict[str, Dict[str, float]]):
+        """
+        Creates a signal for each source in the list, adds them together after projection and applies whitening.
+        Parameters
+        ----------
+        thetas : dict
+            A dictionary of source_name (can be empty string) and parameters for each source.
+
+        Returns
+        -------
+        dict
+            keys:
+                waveform: data (signal + noise) in each detector
+                extrinsic_parameters: {}
+                parameters: waveform parameters
+                asd (if set): amplitude spectral density for each detector
+        """
+
+        # get all the polarizations for each source
+        parameters = {}
+        extrinsic_parameters = {}
+        all_polarizaions = []
+        for source_name, theta in thetas.items():
+            theta_intrinsic, theta_extrinsic = split_off_extrinsic_parameters(theta)
+            theta_intrinsic = {k: float(v) for k, v in theta_intrinsic.items()}
+
+            # Step 1: generate polarizations h_plus and h_cross
+            polarizations = self.waveform_generator.generate_hplus_hcross(theta_intrinsic)
+            polarizations = {  # truncation, in case wfg has a larger frequency range
+                k: self.data_domain.update_data(v) for k, v in polarizations.items()
+            }
+
+            # mash everything together
+            if source_name != "":
+                source_name = f"_{source_name}"
+            parameters.update({f"{p}{source_name}": v for p, v in theta_intrinsic.items()})
+            extrinsic_parameters.update({f"{p}{source_name}": v for p, v in theta_extrinsic.items()})
+            all_polarizaions.append(polarizations)
+
+        wave_forms = {}
+        for key in polarizations.keys():
+            wave_forms[key] = np.sum([pol[key] for pol in all_polarizaions], axis=0)
+
+        # Step 2: project h_plus and h_cross onto detectors
+        sample = {
+            "parameters": extrinsic_parameters,
+            "extrinsic_parameters": wave_forms,
+            "waveform": polarizations,
+        }
+
+        asd = self.asd
+        if asd is not None:
+            sample["asds"] = asd
+
+        # project onto detectors
+        sample = self.projection_transforms(sample)
+
+        # whiten
+        sample = self.whiten_transform(sample)
+
+        return sample
+
+    def random_injection(self):
+        raise NotImplementedError("Not implemented yet.")
+
+
+
