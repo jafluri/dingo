@@ -474,9 +474,7 @@ class MultiSourceInjection(Injection):
         """
 
         # get all the polarizations for each source
-        parameters = {}
-        extrinsic_parameters = {}
-        all_polarizaions = []
+        samples = {"parameters": {}, "extrinsic_parameters": {}, "waveform": []}
         for source_name, theta in thetas.items():
             theta_intrinsic, theta_extrinsic = split_off_extrinsic_parameters(theta)
             theta_intrinsic = {k: float(v) for k, v in theta_intrinsic.items()}
@@ -487,33 +485,32 @@ class MultiSourceInjection(Injection):
                 k: self.data_domain.update_data(v) for k, v in polarizations.items()
             }
 
+            # project onto detectors
+            sample = {
+                "parameters": theta_intrinsic,
+                "extrinsic_parameters": theta_extrinsic,
+                "waveform": polarizations,
+            }
+
+            asd = self.asd
+            if asd is not None:
+                sample["asds"] = asd
+
+            # project onto detectors
+            sample = self.projection_transforms(sample)
+
             # mash everything together
             if source_name != "":
                 source_name = f"_{source_name}"
-            parameters.update({f"{p}{source_name}": v for p, v in theta_intrinsic.items()})
-            extrinsic_parameters.update({f"{p}{source_name}": v for p, v in theta_extrinsic.items()})
-            all_polarizaions.append(polarizations)
+            samples["parameters"].update({f"{p}{source_name}": v for p, v in theta_intrinsic.items()})
+            samples["extrinsic_parameters"].update({f"{p}{source_name}": v for p, v in theta_extrinsic.items()})
+            samples["waveform"].append(polarizations)
 
-        wave_forms = {}
-        for key in polarizations.keys():
-            wave_forms[key] = np.sum([pol[key] for pol in all_polarizaions], axis=0)
-
-        # Step 2: project h_plus and h_cross onto detectors
-        sample = {
-            "parameters": extrinsic_parameters,
-            "extrinsic_parameters": wave_forms,
-            "waveform": polarizations,
-        }
-
-        asd = self.asd
-        if asd is not None:
-            sample["asds"] = asd
-
-        # project onto detectors
-        sample = self.projection_transforms(sample)
+        # add all the waveforms together
+        samples["waveform"] = {k: sum([v[k] for v in samples["waveform"]]) for k in samples["waveform"][0].keys()}
 
         # whiten
-        sample = self.whiten_transform(sample)
+        sample = self.whiten_transform(samples)
 
         return sample
 
