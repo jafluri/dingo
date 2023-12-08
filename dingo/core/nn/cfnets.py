@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from dingo.core.utils import torchutils
-from dingo.core.nn.enets import create_enet_with_projection_layer_and_dense_resnet
+from dingo.core.nn.enets import create_enet_with_projection_layer_and_dense_resnet, create_enet_with_conv_resnet
 from typing import Union, Callable
 
 from dingo.core.nn.enets import DenseResidualNet
@@ -183,14 +183,25 @@ def create_cf_model(
     # get embeddings modules for context
     if embedding_kwargs is not None:
         context_embedding_kwargs = copy.deepcopy(embedding_kwargs)
-        if initial_weights is not None:
-            context_embedding_kwargs["V_rb_list"] = initial_weights["V_rb_list"]
-        elif "V_rb_list" not in context_embedding_kwargs:
-            context_embedding_kwargs["V_rb_list"] = None
+        embedding_type = embedding_kwargs.get("network_type", "dense_resnet")
+        # remove network_type from context_embedding_kwargs
+        if "network_type" in context_embedding_kwargs:
+            del context_embedding_kwargs["network_type"]
+        if embedding_type == "dense_resnet":
+            if initial_weights is not None:
+                context_embedding_kwargs["V_rb_list"] = initial_weights["V_rb_list"]
+            elif "V_rb_list" not in context_embedding_kwargs:
+                context_embedding_kwargs["V_rb_list"] = None
 
-        context_embedding = create_enet_with_projection_layer_and_dense_resnet(
-            **context_embedding_kwargs
-        )
+            context_embedding = create_enet_with_projection_layer_and_dense_resnet(
+                **context_embedding_kwargs
+            )
+        elif embedding_type == "conv_resnet":
+            context_embedding = create_enet_with_conv_resnet(**context_embedding_kwargs)
+        else:
+            raise ValueError(
+                f"Unknown embedding network type: {embedding_type}"
+            )
     else:
         context_embedding = torch.nn.Identity()
 
@@ -249,7 +260,7 @@ def get_theta_embedding_net(embedding_kwargs: dict, input_dim):
     else:
         positional_encoding = torch.nn.Identity()
 
-    if "embedding_net" in embedding_kwargs:
+    if ("embedding_net") in embedding_kwargs:
         activation_fn = torchutils.get_activation_function_from_string(
             embedding_kwargs["embedding_net"]["activation"]
         )

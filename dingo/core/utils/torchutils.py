@@ -6,22 +6,32 @@ from torch.utils.data import DataLoader
 from typing import Union, Tuple, Iterable
 
 
-def get_activation_function_from_string(activation_name: str):
+def get_activation_function_from_string(activation_name: str, layer: bool = False):
     """
     Returns an activation function, based on the name provided.
 
     :param activation_name: str
         name of the activation function, one of {'elu', 'relu', 'leaky_rely'}
-    :return: function
+    :param layer: bool
+        whether to return a layer or a function
+    :return: function or nn.Module
         corresponding activation function
     """
     if activation_name.lower() == "elu":
+        if layer:
+            return nn.ELU()
         return F.elu
     elif activation_name.lower() == "relu":
+        if layer:
+            return nn.ReLU()
         return F.relu
     elif activation_name.lower() == "leaky_relu":
+        if layer:
+            return nn.LeakyReLU()
         return F.leaky_relu
     elif activation_name.lower() == "gelu":
+        if layer:
+            return nn.GELU()
         return F.gelu
     else:
         raise ValueError("Invalid activation function.")

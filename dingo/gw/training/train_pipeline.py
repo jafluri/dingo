@@ -57,16 +57,19 @@ def prepare_training_new(train_settings: dict, train_dir: str, local_settings: d
     # if train_settings["model"]["type"] == "nsf+embedding":
     if train_settings["model"].get("embedding_kwargs", None):
         # First, build the SVD for seeding the embedding network.
-        print("\nBuilding SVD for initialization of embedding network.")
-        initial_weights["V_rb_list"] = build_svd_for_embedding_network(
-            wfd,
-            train_settings["data"],
-            train_settings["training"]["stage_0"]["asd_dataset_path"],
-            num_workers=local_settings["num_workers"],
-            batch_size=train_settings["training"]["stage_0"]["batch_size"],
-            out_dir=train_dir,
-            **train_settings["model"]["embedding_kwargs"]["svd"],
-        )
+        if train_settings["model"]["embedding_kwargs"].get("svd", False):
+            print("\nBuilding SVD for initialization of embedding network.")
+            initial_weights["V_rb_list"] = build_svd_for_embedding_network(
+                wfd,
+                train_settings["data"],
+                train_settings["training"]["stage_0"]["asd_dataset_path"],
+                num_workers=local_settings["num_workers"],
+                batch_size=train_settings["training"]["stage_0"]["batch_size"],
+                out_dir=train_dir,
+                **train_settings["model"]["embedding_kwargs"]["svd"],
+            )
+        else:
+            initial_weights = None
 
         # Now set the transforms for training. We need to do this here so that we can (a)
         # get the data dimensions to configure the network, and (b) save the

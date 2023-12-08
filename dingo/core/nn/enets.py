@@ -237,6 +237,102 @@ class DenseResidualNet(nn.Module):
         return x
 
 
+class ConvNet(nn.Module):
+    """
+    A nn.Module consisting of a sequence of convolutional layers. This is
+    used to embed high dimensional input to a compressed output.
+    """
+
+    def __init__(self,
+                 input_dim: list[int],
+                 conv_specs: List[Tuple[int, int]],
+                 activation: Callable,
+                 dropout: float = 0.0,
+                 batch_norm: bool = False,
+                 flatten: bool = True):
+        """
+        Inits ConvNet with a sequence of convolutional layers.
+        Parameters
+        ----------
+        input_dim : tuple
+            dimension of the input to this module (in_channels, num_bins) or
+            (num_blocks, num_channels, num_bins) then the input is reshaped to
+            (num_blocks*num_channels, num_bins)
+        conv_specs : list
+            A list of tuples, where each tuple contains the parameters for a
+            convolutional layer. The parameters are:
+            - out_channels: int
+                number of output channels
+            - kernel_size: int
+                size of the convolutional kernel
+        activation : callable
+            activation function used in convolutional layers
+        dropout : float
+            dropout probability for convolutional layers used for reqularization
+            default: 0.0
+        batch_norm : bool
+            flag that specifies whether to use batch normalization
+            default: False
+        flatten : bool
+            flag that specifies whether to flatten the output of the convolutional
+            layers
+            default: True
+        """
+        super(ConvNet, self).__init__()
+        self.input_dim = input_dim
+
+        # reshape the input if necessary
+        self.reshape_dim = None
+        if len(input_dim) == 3:
+            input_dim = (input_dim[0]*input_dim[1], input_dim[2])
+            self.reshape_dim = (input_dim[0], input_dim[1])
+
+        # create convolutional layers
+        convs = []
+        output_dim = input_dim
+        for out_channels, kernel_size in conv_specs:
+            convs.append(nn.Conv1d(output_dim[0], out_channels, kernel_size, stride=2))
+            if batch_norm:
+                convs.append(nn.BatchNorm1d(out_channels))
+            convs.append(activation)
+            if dropout > 0.0:
+                convs.append(nn.Dropout(dropout))
+            output_dim = (out_channels, (output_dim[1] - kernel_size) // 2 + 1)
+
+        # flatten the output if necessary
+        if flatten:
+            convs.append(nn.Flatten())
+            output_dim = (output_dim[0]*output_dim[1],)
+
+        # wrap everything in a sequential module
+        self.convs = nn.Sequential(*convs)
+
+        # save the output dimension
+        self.output_dim = output_dim
+
+    def forward(self, x: torch.Tensor):
+        """
+        Forward pass of the ConvNet.
+        Parameters
+        ----------
+        x : torch.Tensor
+            input tensor of shape (batch_size, in_channels, num_bins)
+
+        Returns
+        -------
+        torch.Tensor
+            output tensor of shape (batch_size, out_channels, num_bins)
+        """
+
+        # reshape the input if necessary
+        if self.reshape_dim is not None:
+            batch_size = x.shape[0]
+            x = x.reshape(batch_size, *self.reshape_dim)
+
+        return self.convs(x)
+
+
+
 class ModuleMerger(nn.Module):
     """
     This is a wrapper used to process multiple different kinds of context
@@ -364,6 +460,90 @@ def create_enet_with_projection_layer_and_dense_resnet(
     else:
         return ModuleMerger((enet, nn.Identity()))
 
+
+def create_enet_with_conv_resnet(
+    input_dims: List[int],
+    output_dim: int,
+    conv_specs: List[Tuple[int, int]],
+    hidden_dims: Tuple,
+    activation: str = "elu",
+    dropout: float = 0.0,
+    batch_norm: bool = True,
+    added_context: bool = False,
+):
+    """
+    Builder function for an embedding network for 1D data with multiple
+    blocks and channels. It first reduces the dimensionality via a convolutional
+    neural networks and then uses a sequence of dense residual layers to further
+    reduce the dimensionality.
+
+    The projection requires the complex signal to be represented via the real
+    part in channel 0 and the imaginary part in channel 1. Auxiliary signals
+    may be contained in channels with indices => 2. In GW use case a block
+    corresponds to a detector and channel 2 is used for ASD information.
+
+    If added_context = True, the 2-stage embedding network described above is
+    merged with an identity mapping via ModuleMerger. Then, the expected input
+    is not x with x.shape = (batch_size, num_blocks, num_channels, num_bins),
+    but rather the tuple *(x, z), where z is additional context information. The
+    output of the full module is then the concatenation of enet(x) and z. In
+    GW use case, this is used to concatenate the applied time shifts z to the
+    embedded feature vector of the strain data enet(x).
+
+    Module specs
+    --------
+    For added_context == False:
+        input dimension:    (batch_size, num_blocks, num_channels, num_bins)
+        output dimension:   (batch_size, output_dim)
+    For added_context == True:
+        input dimension:    (batch_size, num_blocks, num_channels, num_bins),
+                            (batch_size, N)
+        output dimension:   (batch_size, output_dim + N)
+
+    :param input_dims:  list
+        dimensions of input batch, omitting batch dimension
+        input_dims = (num_blocks, num_channels, num_bins)
+    :param output_dim: int
+        output dimension of the full module
+    :param conv_specs: list
+        A list of tuples, where each tuple contains the parameters for a
+        convolutional layer. The parameters are:
+        - out_channels: int
+            number of output channels
+        - kernel_size: int
+            size of the convolutional kernel
+    :param hidden_dims: tuple
+        tuple with dimensions of hidden layers of module 2 (the dense resnet)
+    :param activation: str
+        str that specifies activation function used in residual blocks
+    :param dropout: float
+        dropout probability for residual blocks used for reqularization
+    :param batch_norm: bool
+        flag that specifies whether to use batch normalization
+    :param added_context: bool
+        if set to True, additional context z is concatenated to the embedded
+        feature vector enet(x); note that in this case, the expected input is
+        a tuple with 2 elements, input = (x, z) rather than just the tensor x.
+    :return: nn.Module
+    """
+
+    activation_fn = torchutils.get_activation_function_from_string(activation, layer=True)
+    module_1 = ConvNet(input_dims, conv_specs, activation_fn, dropout, batch_norm, flatten=True)
+    print(module_1.output_dim)
+    module_2 = DenseResidualNet(
+        input_dim=module_1.output_dim[0],
+        output_dim=output_dim,
+        hidden_dims=hidden_dims,
+        activation=activation_fn,
+        dropout=dropout,
+        batch_norm=batch_norm,
+    )
+    enet = nn.Sequential(module_1, module_2)
+
+    if not added_context:
+        return enet
+    else:
+        raise NotImplementedError("Added context is not implemented for conv resnet.")
 
 if __name__ == "__main__":
     pass
