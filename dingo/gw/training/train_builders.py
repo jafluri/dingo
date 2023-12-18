@@ -184,8 +184,13 @@ def set_train_transforms(wfd, data_settings, asd_dataset_path, omit_transforms=N
             standardization_dict,
         )
     )
+    source_list = list(data_settings["multiple_sources"].keys()) if "multiple_sources" in data_settings else None
     transforms.append(
-        RepackageStrainsAndASDS(data_settings["detectors"], first_index=domain.min_idx)
+        RepackageStrainsAndASDS(
+            data_settings["detectors"],
+            first_index=domain.min_idx,
+            domain=domain,
+            source_list=source_list)
     )
     if data_settings["context_parameters"]:
         selected_keys = ["inference_parameters", "waveform", "context_parameters"]

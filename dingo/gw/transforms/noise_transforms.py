@@ -188,22 +188,44 @@ class RepackageStrainsAndASDS(object):
         i = 0: strain.real
         i = 1: strain.imag
         i = 2: 1 / (asd * 1e23)
+    If there are multiple sources, the source dict should be a list of source_names
+    And a signal is added for each source. In this case the domain is not allowed to be
+    None. The noise is only added once as last signal.
     """
 
-    def __init__(self, ifos, first_index=0):
+    def __init__(self, ifos, first_index=0, domain=None, source_list=None):
         self.ifos = ifos
         self.first_index = first_index
+
+        # handle multiple sources
+        if source_list is not None and domain is None:
+            raise ValueError("Domain must be provided if source_dict is not None.")
+        self.domain = domain
+        if source_list is not None:
+            self.source_list = source_list
 
     def __call__(self, input_sample):
         sample = input_sample.copy()
         strains = np.empty(
-            (len(self.ifos), 3, len(sample["asds"][self.ifos[0]]) - self.first_index),
+            (len(self.ifos), 2 * len(self.source_list) + 3, len(sample["asds"][self.ifos[0]]) - self.first_index),
             dtype=np.float32,
         )
+
+        # create the source dict
+        source_dict = {"": 0}
+        for source in self.source_list:
+            source_dict[source] = sample["parameters"][f"delta_t_{source}"]
+
         for idx_ifo, ifo in enumerate(self.ifos):
-            strains[idx_ifo, 0] = sample["waveform"][ifo][self.first_index :].real
-            strains[idx_ifo, 1] = sample["waveform"][ifo][self.first_index :].imag
-            strains[idx_ifo, 2] = 1 / (sample["asds"][ifo][self.first_index :] * 1e23)
+            for source_num, (source, delta_t) in enumerate(source_dict.items()):
+                # shift the time back so the other source is centered
+                if self.domain is not None:
+                    sample["waveform"][ifo] = self.domain.time_translate_data(
+                        sample["waveform"][ifo], -delta_t
+                    )
+                strains[idx_ifo, 2*source_num + 0] = sample["waveform"][ifo][self.first_index :].real
+                strains[idx_ifo, 2*source_num + 1] = sample["waveform"][ifo][self.first_index :].imag
+            strains[idx_ifo, -1] = 1 / (sample["asds"][ifo][self.first_index :] * 1e23)
         sample["waveform"] = strains
         return sample
 

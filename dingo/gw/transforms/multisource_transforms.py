@@ -35,6 +35,7 @@ class SampleExtrinsicMultiSource(object):
         extrinsic_parameters = self.prior.sample()
         source_parameters = self.source_prior.sample()
         extrinsic_parameters = {k: float(v) for k, v in extrinsic_parameters.items()}
+        extrinsic_parameters["delta_t"] = source_parameters["delta_t"]
         extrinsic_parameters["geocent_time"] += source_parameters["delta_t"]
         sample["extrinsic_parameters"] = extrinsic_parameters
         return sample
@@ -96,6 +97,8 @@ class AddNewSource(object):
             sample["waveform"][ifo] += source_sample["waveform"][ifo]
         for param, value in source_sample["parameters"].items():
             sample["parameters"][f"{param}_{self.source_name}"] = value
+        # add the delta_t to the parameters
+        sample["parameters"][f"delta_t_{self.source_name}"] = source_sample["extrinsic_parameters"]["delta_t"]
 
         # combine the two samples
         return input_sample
