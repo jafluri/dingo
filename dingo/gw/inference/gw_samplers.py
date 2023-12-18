@@ -168,6 +168,8 @@ class GWSampler(GWSamplerMixin, Sampler):
         #   * repackage strains and asds from dicts to an array
         #   * convert array to torch tensor on the correct device
         #   * extract only strain/waveform from the sample
+        data_settings = self.base_model_metadata["dataset_settings"]
+        source_list = list(data_settings["multiple_sources"].keys()) if "multiple_sources" in data_settings else None
         self.transform_pre = Compose(
             [
                 WhitenAndScaleStrain(self.domain.noise_std),
@@ -177,6 +179,8 @@ class GWSampler(GWSamplerMixin, Sampler):
                 RepackageStrainsAndASDS(
                     self.base_model_metadata["train_settings"]["data"]["detectors"],
                     first_index=self.domain.min_idx,
+                    domain=self.domain,
+                    source_list=source_list,
                 ),
                 ToTorch(device=self.model.device),
                 GetItem("waveform"),
