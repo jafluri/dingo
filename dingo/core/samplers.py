@@ -107,6 +107,7 @@ class Sampler(object):
     def context(self, value):
         if value is not None and "parameters" in value:
             self.metadata["injection_parameters"] = value.pop("parameters")
+            value["parameters"] = {k: v for k, v in self.metadata["injection_parameters"].items() if k.startswith("delta_t")}
         self._context = value
 
     @property
@@ -140,9 +141,6 @@ class Sampler(object):
         if not self.unconditional_model:
             if context is None:
                 raise ValueError("Context required to run sampler.")
-            x = context.copy()
-            x["parameters"] = {}
-            x["extrinsic_parameters"] = {}
 
             # transforms_pre are expected to transform the data in the same way for each
             # requested sample. We therefore expand it across the batch *after*
