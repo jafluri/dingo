@@ -297,7 +297,7 @@ class ConvNet(nn.Module):
             convs.append(activation)
             if dropout > 0.0:
                 convs.append(nn.Dropout(dropout))
-            output_dim = (out_channels, (output_dim[1] + 2*1 - kernel_size - 2) // 2 + 1)
+            output_dim = (out_channels, (output_dim[1] + 2*1 - 1*(kernel_size - 1) - 1) // 2 + 1)
 
         # flatten the output if necessary
         if flatten:
