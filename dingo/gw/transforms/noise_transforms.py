@@ -201,8 +201,7 @@ class RepackageStrainsAndASDS(object):
         if source_list is not None and domain is None:
             raise ValueError("Domain must be provided if source_dict is not None.")
         self.domain = domain
-        if source_list is not None:
-            self.source_list = source_list
+        self.source_list = [] if source_list is None else source_list
 
     def __call__(self, input_sample):
         sample = input_sample.copy()
