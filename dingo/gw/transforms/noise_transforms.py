@@ -220,11 +220,13 @@ class RepackageStrainsAndASDS(object):
             for source_num, (source, delta_t) in enumerate(source_dict.items()):
                 # shift the time back so the other source is centered
                 if self.domain is not None:
-                    sample["waveform"][ifo] = self.domain.time_translate_data(
+                    waveform = self.domain.time_translate_data(
                         sample["waveform"][ifo], -delta_t
                     )
-                strains[idx_ifo, 2*source_num + 0] = sample["waveform"][ifo][self.first_index :].real
-                strains[idx_ifo, 2*source_num + 1] = sample["waveform"][ifo][self.first_index :].imag
+                else:
+                    waveform = sample["waveform"][ifo]
+                strains[idx_ifo, 2*source_num + 0] = waveform[self.first_index :].real
+                strains[idx_ifo, 2*source_num + 1] = waveform[self.first_index :].imag
             strains[idx_ifo, -1] = 1 / (sample["asds"][ifo][self.first_index :] * 1e23)
         sample["waveform"] = strains
         return sample
