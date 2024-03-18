@@ -129,6 +129,15 @@ def get_standardization_dict(
             source_params = [param for param in selected_parameters if param.endswith(f"_{source_name}")]
             for param in source_params:
                 original_param = param.replace(f"_{source_name}", "")
+                print(original_param)
+
+                # this is the only param that the main source does not have
+                if original_param == "delta_t":
+                    delta_prior = BBHExtrinsicPriorDict(source_dict)
+                    delt_m, delta_s = delta_prior.mean_std(["delta_t"])
+                    mean[param] = delt_m["delta_t"]
+                    std[param] = delta_s["delta_t"]
+                    continue
 
                 # if the original param is not already calculated we raise an error
                 if original_param not in mean:

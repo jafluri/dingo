@@ -162,9 +162,10 @@ def set_train_transforms(wfd, data_settings, asd_dataset_path, omit_transforms=N
         # we copy the transforms here to avoid add sources multiple times
         transforms_copy = transforms.copy()
         for source_name, source_dict in data_settings["multiple_sources"].items():
+            current_copy = transforms_copy.copy()
             # copy the transforms list and replace the extrinsic parameters transform
-            transforms_copy[0] = SampleExtrinsicMultiSource(extrinsic_prior_dict, source_dict)
-            source_transform = torchvision.transforms.Compose(transforms_copy)
+            current_copy[0] = SampleExtrinsicMultiSource(extrinsic_prior_dict, source_dict)
+            source_transform = torchvision.transforms.Compose(current_copy)
             transforms.append(AddNewSource(source_name, wfd, source_transform))
             print("Adding multiple sources.")
 

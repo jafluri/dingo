@@ -291,13 +291,15 @@ class ConvNet(nn.Module):
         convs = []
         output_dim = input_dim
         for out_channels, kernel_size in conv_specs:
-            convs.append(nn.Conv1d(output_dim[0], out_channels, kernel_size, stride=2, padding=1))
+            padding = 3
+            stride = 4
+            convs.append(nn.Conv1d(output_dim[0], out_channels, kernel_size, stride=stride, padding=padding))
             if batch_norm:
                 convs.append(nn.BatchNorm1d(out_channels))
             convs.append(activation)
             if dropout > 0.0:
                 convs.append(nn.Dropout(dropout))
-            output_dim = (out_channels, (output_dim[1] + 2*1 - 1*(kernel_size - 1) - 1) // 2 + 1)
+            output_dim = (out_channels, (output_dim[1] + 2*padding - 1*(kernel_size - 1) - 1) // stride + 1)
 
         # flatten the output if necessary
         if flatten:
