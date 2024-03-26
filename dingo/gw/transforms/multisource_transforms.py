@@ -101,5 +101,5 @@ class AddNewSource(object):
         sample["parameters"][f"delta_t_{self.source_name}"] = source_sample["extrinsic_parameters"]["delta_t"]
 
         # combine the two samples
-        return input_sample
+        return sample
 
