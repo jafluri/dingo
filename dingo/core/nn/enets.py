@@ -295,7 +295,8 @@ class ConvNet(nn.Module):
             stride = 4
             convs.append(nn.Conv1d(output_dim[0], out_channels, kernel_size, stride=stride, padding=padding))
             if batch_norm:
-                convs.append(nn.BatchNorm1d(out_channels))
+                # this is layer norm without knowing the number of features
+                convs.append(nn.GroupNorm(num_groups=1, num_channels=out_channels))
             convs.append(activation)
             if dropout > 0.0:
                 convs.append(nn.Dropout(dropout))
