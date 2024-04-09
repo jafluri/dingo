@@ -391,15 +391,13 @@ class MultiSourceInjection(Injection):
     A class that deal with multiple sources in the same injection.
     """
 
-    def injection(self, thetas: Dict[str, Dict[str, float]], seed: None|int = None):
+    def injection(self, thetas: Dict[str, Dict[str, float]]):
         """
         Generate an injection based on specified parameters.
         Parameters
         ----------
         thetas : dict
             A dictionary of source_name (can be empty string) and parameters for each source.
-        seed : None|int
-            Seed for random number generator. Note that all sources will be generated with the same seed.
 
         Returns
         -------
@@ -425,8 +423,6 @@ class MultiSourceInjection(Injection):
 
         data = {}
         for ifo, s in signal["waveform"].items():
-            if seed is not None:
-                np.random.seed(seed)
             noise = (
                 (np.random.randn(len(s)) + 1j * np.random.randn(len(s)))
                 * asd[ifo]
