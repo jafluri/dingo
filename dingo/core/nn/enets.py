@@ -5,7 +5,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 from torch.nn import functional as F
-from glasflow.nflows.nn.nets.resnet import ResidualBlock
+from dingo.core.nn.layers import ResidualBlock
 from dingo.core.utils import torchutils
 
 
