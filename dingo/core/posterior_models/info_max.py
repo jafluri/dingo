@@ -104,7 +104,7 @@ class InfoMaxNetwork(nn.Module):
             hidden_dims=summary_network_kwargs["hidden_dims"],
             activation=activation_fn,
             dropout=0.0,
-            batch_norm=False,
+            batch_norm=summary_network_kwargs.get("batch_norm", False),
         )
 
     def forward(self, obs: torch.Tensor, theta: torch.Tensor):
