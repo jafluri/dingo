@@ -17,6 +17,7 @@ from dingo.gw.training.train_builders import (
     build_svd_for_embedding_network,
 )
 from dingo.core.posterior_models.base_model import Base
+from dingo.core.posterior_models.info_max import InfoMax
 from dingo.core.utils.trainutils import RuntimeLimits
 from dingo.core.utils import (
     set_requires_grad_flag,
@@ -229,6 +230,75 @@ def initialize_stage(pm, wfd, stage, num_workers, resume=False):
     return train_loader, test_loader
 
 
+def pretrain_summary(pm, wfd, train_dir, local_settings):
+    """
+    Pretrain the summary network. This is done before the main training stages and can also just restore
+    the weights of the summary network.
+
+    Parameters
+    ----------
+    pm : Base
+    wfd : WaveformDataset
+    train_dir : str
+        Directory for saving checkpoints and train history.
+    local_settings : dict
+
+    Returns
+    -------
+    bool
+        True if pretrain model was successfully trained
+        False otherwise
+    """
+
+    train_settings = pm.metadata["train_settings"]
+    pretrain_settings = train_settings["training"]["pretrain"]
+    device = local_settings["device"]
+
+    # create the base model
+    info_max = InfoMax(context_embedding_net=pm.network.context_embedding_net,
+                       metadata=pm.metadata,
+                       device=device,
+                       model_filename=pretrain_settings.get("restore", None))
+
+    runtime_limits = RuntimeLimits(
+        epoch_start=info_max.epoch, **local_settings["runtime_limits"]
+    )
+
+    # restore the summaries from a previous run
+    if pretrain_settings.get("restore", False):
+        print("Restoring pretrain model.")
+        pm.network.context_embedding_net.load_state_dict(info_max.network.context_embedding_net.state_dict())
+
+        if pretrain_settings.get("fix_summary_net", False):
+            for param in pm.network.context_embedding_net.parameters():
+                param.requires_grad = False
+
+        return True
+
+    # get the train and test loader
+    train_loader, test_loader = initialize_stage(
+        info_max, wfd, pretrain_settings, local_settings["num_workers"], resume=False
+    )
+
+    os.makedirs(train_dir + "/info_max", exist_ok=True)
+    runtime_limits.max_epochs_total = pretrain_settings["epochs"]
+    info_max.train(
+            train_loader,
+            test_loader,
+            train_dir=train_dir + "/info_max",
+            runtime_limits=runtime_limits,
+            checkpoint_epochs=local_settings["checkpoint_epochs"],
+            use_wandb=local_settings.get("wandb", False),
+            test_only=local_settings.get("test_only", False),
+        )
+
+    pm.network.context_embedding_net.load_state_dict(info_max.network.context_embedding_net.state_dict())
+    if pretrain_settings.get("fix_summary_net", False):
+        for param in pm.network.context_embedding_net.parameters():
+            param.requires_grad = False
+
+    return True
+
 def train_stages(pm, wfd, train_dir, local_settings):
     """
     Train the network, iterating through the sequence of stages. Stages can change
@@ -253,6 +323,10 @@ def train_stages(pm, wfd, train_dir, local_settings):
     runtime_limits = RuntimeLimits(
         epoch_start=pm.epoch, **local_settings["runtime_limits"]
     )
+
+    # pretrain or restore the weights of the summary network
+    if "pretrain" in train_settings["training"]:
+        pretrain_summary(pm, wfd, train_dir, local_settings)
 
     # Extract list of stages from settings dict
     stages = []
