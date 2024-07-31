@@ -106,13 +106,14 @@ class ContinuousFlowModel(nn.Module):
             )
         return self._cached_context_embedding
 
-    def forward(self, t, theta, *context):
+    def get_embeddings(self, t, theta, *context):
         # embed theta (self.embedding_net_theta might just be identity)
         t_and_theta_embedding = torch.cat((t.unsqueeze(1), theta), dim=1)
         t_and_theta_embedding = self.theta_embedding_net(t_and_theta_embedding)
         # for unconditional forward pass
         if len(context) == 0:
             assert not self.theta_with_glu
+            return t_and_theta_embedding, None
             return self.continuous_flow(t_and_theta_embedding)
 
         # embed context (self.context_embedding_net might just be identity)
@@ -127,6 +128,9 @@ class ContinuousFlowModel(nn.Module):
         if len(t_and_theta_embedding.shape) != 2 or len(context_embedding.shape) != 2:
             raise NotImplementedError()
 
+        return t_and_theta_embedding, context_embedding
+
+    def forward_from_embedding(self, context_embedding, t_and_theta_embedding):
         # a = context_embedding and b = t_and_theta_embedding now need to be provided
         # to the continuous flow network, which predicts a vector field as a function
         # of a and b. The flow network has two entry points: the normal input to the
@@ -151,6 +155,17 @@ class ContinuousFlowModel(nn.Module):
             return self.continuous_flow(input)
         else:
             return self.continuous_flow(input, glu_context)
+
+    def forward(self, t, theta, *context):
+        # get the embeddings
+        t_and_theta_embedding, context_embedding = self.get_embeddings(t, theta, *context)
+
+        if context_embedding is None:
+            return self.continuous_flow(t_and_theta_embedding)
+
+        # forward with embeddings
+        return self.forward_from_embedding(context_embedding, t_and_theta_embedding)
+
 
 
 def create_cf_model(

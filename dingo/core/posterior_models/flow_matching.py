@@ -1,6 +1,10 @@
 import torch
 from torch import nn
 
+import numpy as np
+import ot
+
+from dingo.core.utils import torchutils
 from .cflow_base import ContinuousFlowsBase
 
 
@@ -25,6 +29,12 @@ class FlowMatching(ContinuousFlowsBase):
         super().__init__(**kwargs)
         self.eps = 0
         self.sigma_min = self.model_kwargs["posterior_kwargs"]["sigma_min"]
+        self.match_rate = self.model_kwargs["posterior_kwargs"].get("match_rate", None)
+        self.match_type = self.model_kwargs["posterior_kwargs"].get("match_type", None)
+        self.beta = 1.0
+        if self.match_rate is not None and self.match_type not in ["pcot", "scot"]:
+            raise ValueError("Match rate can only be defined for pcot and scot.")
+
 
     def evaluate_vectorfield(self, t, theta_t, *context_data):
         """
@@ -60,12 +70,100 @@ class FlowMatching(ContinuousFlowsBase):
         t = self.sample_t(len(theta))
         theta_0 = self.sample_theta_0(len(theta))
         theta_1 = theta
+
+        # reorder params if necessary
+        n_match = None
+        if self.match_type == "pcot":
+            theta_0, n_match = self.reorder_batch(
+                params=theta_1,
+                init_params=theta_0,
+                obs=theta_0,
+                beta=self.beta,
+                param_condition=True,
+            )
+
+        # eval the embedding
+        context_embedding = torchutils.forward_pass_with_unpacked_tuple(
+            self.network.context_embedding_net, *context_data
+        )
+
+        # reorder if necessary
+        if self.match_type == "scot":
+            theta_0, n_match = self.reorder_batch(
+                params=theta,
+                init_params=theta_0,
+                obs=context_embedding,
+                beta=self.beta,
+                param_condition=False,
+            )
+
+        # interpolate
         theta_t = ot_conditional_flow(theta_0, theta_1, t, self.sigma_min)
         true_vf = theta - (1 - self.sigma_min) * theta_0
 
-        predicted_vf = self.network(t, theta_t, *context_data)
+        # get the theta and t embedding
+        # embed theta (self.embedding_net_theta might just be identity)
+        t_and_theta_embedding = torch.cat((t.unsqueeze(1), theta_t), dim=1)
+        t_and_theta_embedding = self.network.theta_embedding_net(t_and_theta_embedding)
+
+        predicted_vf = self.network.forward_from_embedding(context_embedding, t_and_theta_embedding)
         loss = mse(predicted_vf, true_vf)
+
+        # adapt beta if necessary
+        if self.match_rate is not None and self.network.training:
+            current_match_rate = n_match / len(theta_0)
+            if current_match_rate < self.match_rate:
+                self.beta = self.beta * 1.1
+            else:
+                self.beta = self.beta * 0.9
+
         return loss
+
+    @staticmethod
+    @torch.no_grad()
+    def reorder_batch(
+            params: torch.Tensor,
+            init_params: torch.Tensor,
+            obs: torch.Tensor,
+            beta: None | float = None,
+            param_condition: bool = False,
+    ) -> tuple[torch.Tensor, int]:
+        """
+        Reorders a batch of initial params according to the optimal transport plan
+        :param params: The target params
+        :param init_params: The initial params
+        :param obs: The corresponding observations (or the embedding of it)
+        :param beta: The beta value for the obs anchoring, if None, no reordering is done.
+        :param param_condition: If true the parameters are used for anchoring, if false the observations.
+        :return: The reordered batch of initial params
+        """
+
+        # nothing to do
+        if beta is None:
+            return init_params, init_params.shape[0]
+
+        # get the shapes of the params and the obs
+        _, param_dim = params.shape
+        _, obs_dim = obs.shape
+
+        # dist matrices
+        dist_matrix_params = torch.cdist(params, init_params, p=2).square() / param_dim
+        # choose the right distance matrix
+        if param_condition:
+            dist_matrix_obs = torch.cdist(params, params, p=2).square() / param_dim
+        else:
+            dist_matrix_obs = torch.cdist(obs, obs, p=2).square() / obs_dim
+
+        # add according to beta
+        dist_matrix = dist_matrix_params + beta * dist_matrix_obs
+
+        # get the optimal transport plan
+        g0 = ot.emd([], [], dist_matrix.cpu().numpy())
+        tp = np.argwhere(g0)
+
+        # reorder the initial params
+        init_params_reorder = init_params[tp[:, 1]]
+        return init_params_reorder, np.sum(tp[:, 1] == tp[:, 0])
 
 
 def ot_conditional_flow(x_0, x_1, t, sigma_min):
