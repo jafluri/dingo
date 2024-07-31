@@ -245,10 +245,15 @@ class ContinuousFlowsBase(Base):
         log_prior = compute_log_prior(theta_0)
         theta_and_div_init = torch.cat((theta_0, log_prior.unsqueeze(1)), dim=1)
 
-        _, theta_and_div_1 = odeint(
+        # counter wrap
+        func = CountingFunc(
             lambda t, theta_and_div_t: self.rhs_of_joint_ode(
                 t, theta_and_div_t, *context_data
-            ),
+            )
+        )
+
+        _, theta_and_div_1 = odeint(
+            func,
             theta_and_div_init,
             self.integration_range,  # integrate forwards in time, [0, 1-eps]
             atol=1e-7,
@@ -256,6 +261,9 @@ class ContinuousFlowsBase(Base):
             method="dopri5",
             options={"norm": norm_without_divergence_component}
         )
+
+        # FIXME: properly implement the count
+        print(f"Number of function evaluations: {func.n_evals}")
 
         theta_1, log_prob_1 = theta_and_div_1[:, :-1], theta_and_div_1[:, -1]
 
