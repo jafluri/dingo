@@ -153,16 +153,23 @@ class ContinuousFlowsBase(Base):
                 )
             batch_size = len(context_data[0])
 
+        # wrap in count function to count the number of function evaluations
+        func = CountingFunc(
+            lambda t, theta_t: self.evaluate_vectorfield(t, theta_t, *context_data)
+        )
+
         with torch.no_grad():
             theta_0 = self.sample_theta_0(batch_size)
             _, theta_1 = odeint(
-                lambda t, theta_t: self.evaluate_vectorfield(t, theta_t, *context_data),
+                func,
                 theta_0,
                 self.integration_range,
                 atol=1e-7,
                 rtol=1e-7,
                 method="dopri5",
             )
+            
+        print(f"Number of function evaluations: {func.n_evals}")
 
         self.network.train()
         return theta_1
@@ -261,6 +268,18 @@ class ContinuousFlowsBase(Base):
         self.eps = 0.
         """
         return torch.tensor([0.0, 1.0 - self.eps]).type(torch.float32).to(self.device)
+
+class CountingFunc:
+    """
+    Wrapper class to count the number of function evaluations.
+    """
+    def __init__(self, func):
+        self.func = func
+        self.n_evals = 0
+
+    def __call__(self, t, y):
+        self.n_evals += 1
+        return self.func(t, y)
 
 
 def compute_divergence(y, x):
