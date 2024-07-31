@@ -160,13 +160,15 @@ class Sampler(object):
         # have a flag for whether to calculate the log_prob.
         self.model.network.eval()
         with torch.no_grad():
-            y, log_prob = self.model.sample(
-                *x, get_log_prob=True
-            )
+            y = self.model.sample(*x, get_log_prob=False)
+            # y, log_prob = self.model.sample(
+            #     *x, get_log_prob=True
+            # )
 
-        samples = self.transform_post({"parameters": y, "log_prob": log_prob})
+        # samples = self.transform_post({"parameters": y, "log_prob": log_prob})
+        samples = self.transform_post({"parameters": y})
         result = samples["parameters"]
-        result["log_prob"] = samples["log_prob"]
+        # result["log_prob"] = samples["log_prob"]
         return result
 
     def run_sampler(
