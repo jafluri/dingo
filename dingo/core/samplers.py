@@ -60,6 +60,7 @@ class Sampler(object):
     def __init__(
         self,
         model: Base,
+        sample_prob = False,
     ):
         """
         Parameters
@@ -67,6 +68,7 @@ class Sampler(object):
         model : Base
         """
         self.model = model
+        self.sample_prob = sample_prob
 
         self.metadata = self.model.metadata.copy()
         if self.metadata["train_settings"]["data"].get("unconditional", False):
@@ -160,17 +162,24 @@ class Sampler(object):
         # For a normalizing flow, we get the log_prob for "free" when sampling,
         # so we always include this. For other architectures, it may make sense to
         # have a flag for whether to calculate the log_prob.
-        self.model.network.eval()
-        with torch.no_grad():
-            y = self.model.sample(*x, get_log_prob=False)
-            # y, log_prob = self.model.sample(
-            #     *x, get_log_prob=True
-            # )
+        if self.sample_prob:
+            self.model.network.eval()
+            with torch.no_grad():
+                y, log_prob = self.model.sample(
+                    *x, get_log_prob=True
+                )
+            samples = self.transform_post({"parameters": y, "log_prob": log_prob})
+            result = samples["parameters"]
+            result["log_prob"] = samples["log_prob"]
 
-        # samples = self.transform_post({"parameters": y, "log_prob": log_prob})
-        samples = self.transform_post({"parameters": y})
-        result = samples["parameters"]
-        # result["log_prob"] = samples["log_prob"]
+        else:
+            self.model.network.eval()
+            with torch.no_grad():
+                y = self.model.sample(*x, get_log_prob=False)
+
+            samples = self.transform_post({"parameters": y})
+            result = samples["parameters"]
+
         return result
 
     def run_sampler(

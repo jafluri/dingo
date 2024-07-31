@@ -168,7 +168,8 @@ class ContinuousFlowsBase(Base):
                 rtol=1e-7,
                 method="dopri5",
             )
-            
+
+        # FIXME: properly implement the count
         print(f"Number of function evaluations: {func.n_evals}")
 
         self.network.train()
