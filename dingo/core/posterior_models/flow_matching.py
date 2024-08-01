@@ -31,6 +31,7 @@ class FlowMatching(ContinuousFlowsBase):
         self.sigma_min = self.model_kwargs["posterior_kwargs"]["sigma_min"]
         self.match_rate = self.model_kwargs["posterior_kwargs"].get("match_rate", None)
         self.match_type = self.model_kwargs["posterior_kwargs"].get("match_type", None)
+        self.sinkhorn_reg = self.model_kwargs["posterior_kwargs"].get("sinkhorn_reg", None)
         self.beta = 1.0
         if self.match_rate is not None and self.match_type not in ["pcot", "scot"]:
             raise ValueError("Match rate can only be defined for pcot and scot.")
@@ -80,6 +81,7 @@ class FlowMatching(ContinuousFlowsBase):
                 obs=theta_0,
                 beta=self.beta,
                 param_condition=True,
+                sinkhorn_reg=self.sinkhorn_reg,
             )
 
         # eval the embedding
@@ -95,6 +97,7 @@ class FlowMatching(ContinuousFlowsBase):
                 obs=context_embedding,
                 beta=self.beta,
                 param_condition=False,
+                sinkhorn_reg=self.sinkhorn_reg,
             )
 
         # interpolate
@@ -127,6 +130,7 @@ class FlowMatching(ContinuousFlowsBase):
             obs: torch.Tensor,
             beta: None | float = None,
             param_condition: bool = False,
+            sinkhorn_reg: None | float = None,
     ) -> tuple[torch.Tensor, int]:
         """
         Reorders a batch of initial params according to the optimal transport plan
@@ -135,6 +139,7 @@ class FlowMatching(ContinuousFlowsBase):
         :param obs: The corresponding observations (or the embedding of it)
         :param beta: The beta value for the obs anchoring, if None, no reordering is done.
         :param param_condition: If true the parameters are used for anchoring, if false the observations.
+        :param sinkhorn_reg: The regularization parameter for the sinkhorn algorithm, if None the exact OT is used.
         :return: The reordered batch of initial params
         """
 
@@ -157,13 +162,30 @@ class FlowMatching(ContinuousFlowsBase):
         # add according to beta
         dist_matrix = dist_matrix_params + beta * dist_matrix_obs
 
-        # get the optimal transport plan
-        g0 = ot.emd([], [], dist_matrix.cpu().numpy())
-        tp = np.argwhere(g0)
+        if sinkhorn_reg is None:
+            # get the optimal transport plan
+            g0 = ot.emd([], [], dist_matrix.cpu().numpy())
+            tp = np.argwhere(g0)
 
-        # reorder the initial params
-        init_params_reorder = init_params[tp[:, 1]]
-        return init_params_reorder, np.sum(tp[:, 1] == tp[:, 0])
+            # reorder the initial params
+            init_params_reorder = init_params[tp[:, 1]]
+            return init_params_reorder, np.sum(tp[:, 1] == tp[:, 0])
+
+        else:
+            # sinkhorn on GPU
+            p = ot.sinkhorn([], [], dist_matrix, reg=sinkhorn_reg)
+            p /= p.sum(dim=1, keepdim=True)
+
+            # sample on element per row
+            cum_p = torch.cumsum(p, axis=1)
+            r = torch.rand(len(cum_p), 1, device=p.device)
+            selection = r < cum_p
+            indices = torch.argmax(selection.float(), dim=1)
+
+            # reorder the initial params
+            init_params_reorder = init_params[indices]
+
+            return init_params_reorder, torch.sum(indices == torch.arange(len(indices), device=p.device)).item()
 
 
 def ot_conditional_flow(x_0, x_1, t, sigma_min):
