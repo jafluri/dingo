@@ -60,7 +60,7 @@ class Sampler(object):
     def __init__(
         self,
         model: Base,
-        sample_prob = False,
+        sample_prob = True,
     ):
         """
         Parameters

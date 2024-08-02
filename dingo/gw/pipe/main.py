@@ -94,6 +94,9 @@ class MainInput(BilbyMainInput):
         self.num_gnpe_iterations = args.num_gnpe_iterations
         self.importance_sampling_updates = importance_sampling_updates
 
+        self.disable_hdf5_locking = True
+        self.transfer_files = None
+
         Input.__init__(self, args, unknown_args, print_msg=False)
 
         self.known_args = args
@@ -134,6 +137,8 @@ class MainInput(BilbyMainInput):
         self.scheduler_module = args.scheduler_module
         self.scheduler_env = args.scheduler_env
         self.scheduler_analysis_time = args.scheduler_analysis_time
+        self.environment_variables = None
+        self.getenv = None
 
         # self.waveform_approximant = args.waveform_approximant
         #
