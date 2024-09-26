@@ -170,7 +170,7 @@ class Sampler(object):
         samples = self.transform_post({"parameters": y})
         result = samples["parameters"]
 
-        if log_prob:
+        if get_log_prob:
             samples["log_prob"] = log_prob
             result["log_prob"] = samples["log_prob"]
 
