@@ -163,7 +163,7 @@ class Sampler(object):
         self.model.network.eval()
 
         with torch.no_grad():
-            y, log_prob = self.model.sample(
+            y, *log_prob = self.model.sample(
                 *x, get_log_prob=log_prob
             )
 
