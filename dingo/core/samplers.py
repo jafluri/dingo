@@ -163,9 +163,12 @@ class Sampler(object):
         self.model.network.eval()
 
         with torch.no_grad():
-            y, *log_prob = self.model.sample(
-                *x, get_log_prob=get_log_prob
-            )
+            if get_log_prob:
+                y, log_prob = self.model.sample(
+                    *x, get_log_prob=True
+                )
+            else:
+                y = self.model.sample(*x, get_log_prob=False)
 
         samples = self.transform_post({"parameters": y})
         result = samples["parameters"]
