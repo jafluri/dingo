@@ -65,6 +65,7 @@ class Sampler(object):
         Parameters
         ----------
         model : Base
+        log_prob : bool
         """
         self.model = model
 
@@ -137,6 +138,7 @@ class Sampler(object):
         self,
         num_samples: int,
         context: Optional[dict] = None,
+        log_prob: bool = True,
     ) -> dict:
         if not self.unconditional_model:
             if context is None:
@@ -159,22 +161,26 @@ class Sampler(object):
         # so we always include this. For other architectures, it may make sense to
         # have a flag for whether to calculate the log_prob.
         self.model.network.eval()
-        with torch.no_grad():
-            y = self.model.sample(*x, get_log_prob=False)
-            # y, log_prob = self.model.sample(
-            #     *x, get_log_prob=True
-            # )
 
-        # samples = self.transform_post({"parameters": y, "log_prob": log_prob})
+        with torch.no_grad():
+            y, log_prob = self.model.sample(
+                *x, get_log_prob=log_prob
+            )
+
         samples = self.transform_post({"parameters": y})
         result = samples["parameters"]
-        # result["log_prob"] = samples["log_prob"]
+
+        if log_prob:
+            samples["log_prob"] = log_prob
+            result["log_prob"] = samples["log_prob"]
+
         return result
 
     def run_sampler(
         self,
         num_samples: int,
         batch_size: Optional[int] = None,
+        log_prob: bool = True,
     ):
         """
         Generates samples and stores them in self.samples. Conditions the model on
@@ -196,6 +202,8 @@ class Sampler(object):
             Number of samples requested.
         batch_size : int, optional
             Batch size for sampler.
+        log_prob : bool, optional
+            Whether to calculate the log probability of the samples.
         """
         self.samples = None
 
@@ -213,9 +221,9 @@ class Sampler(object):
         if batch_size is None:
             batch_size = num_samples
         full_batches, remainder = divmod(num_samples, batch_size)
-        samples = [self._run_sampler(batch_size, context) for _ in range(full_batches)]
+        samples = [self._run_sampler(batch_size, context, log_prob=log_prob) for _ in range(full_batches)]
         if remainder > 0:
-            samples.append(self._run_sampler(remainder, context))
+            samples.append(self._run_sampler(remainder, context, log_prob=log_prob))
         samples = {p: torch.cat([s[p] for s in samples]) for p in samples[0].keys()}
         samples = {k: v.cpu().numpy() for k, v in samples.items()}
 
