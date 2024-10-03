@@ -8,13 +8,13 @@ from bilby.gw.utils import ln_i0
 from threadpoolctl import threadpool_limits
 
 from dingo.core.likelihood import Likelihood
-from dingo.gw.injection import GWSignal
+from dingo.gw.injection import MultiSourceInjection
 from dingo.gw.waveform_generator import WaveformGenerator
 from dingo.gw.domains import build_domain
 from dingo.gw.data.data_preparation import get_event_data_and_domain
 
-
-class StationaryGaussianGWLikelihood(GWSignal, Likelihood):
+# FIXME: This is a temporary fix to allow multi source, but should be able to handle both single and multi source
+class StationaryGaussianGWLikelihood(MultiSourceInjection, Likelihood):
     """
     Implements GW likelihood for stationary, Gaussian noise.
     """
@@ -60,6 +60,8 @@ class StationaryGaussianGWLikelihood(GWSignal, Likelihood):
             data_domain=data_domain,
             ifo_list=list(event_data["waveform"].keys()),
             t_ref=t_ref,
+            # FIXME: This is a quick hack to avoid changing the likelihood class
+            prior=None
         )
 
         self.asd = event_data["asds"]
@@ -273,6 +275,8 @@ class StationaryGaussianGWLikelihood(GWSignal, Likelihood):
         log_likelihood: float
         """
 
+        # add 
+
         # Step 1: Compute whitened GW strain mu(theta) for parameters theta.
         mu = self.signal(theta)["waveform"]
         d = self.whitened_strains
@@ -286,7 +290,11 @@ class StationaryGaussianGWLikelihood(GWSignal, Likelihood):
                 for d_ifo, mu_ifo in zip(d.values(), mu.values())
             ],
         )
-        return self.log_Zn + kappa2 - 1 / 2.0 * rho2opt
+
+        print(self.log_Zn, kappa2 - 1 / 2.0 * rho2opt)
+
+        likelihood = self.log_Zn + kappa2 - 1 / 2.0 * rho2opt
+        return likelihood
 
     def log_likelihood_phase_grid(self, theta, phases=None):
         # TODO: Implement for time marginalization

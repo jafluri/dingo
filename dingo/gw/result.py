@@ -179,11 +179,14 @@ class Result(CoreResult):
 
     def _build_prior(self):
         """Build the prior based on model metadata. Called by __init__()."""
+
         intrinsic_prior = self.base_metadata["dataset_settings"]["intrinsic_prior"]
         extrinsic_prior = get_extrinsic_prior_dict(
             self.base_metadata["train_settings"]["data"]["extrinsic_prior"]
         )
-        self.prior = build_prior_with_defaults({**intrinsic_prior, **extrinsic_prior})
+        full_prior = {**intrinsic_prior, **extrinsic_prior}
+        print("full_prior", full_prior)
+        self.prior = build_prior_with_defaults(full_prior)
 
         prior_update = self.importance_sampling_metadata.get("prior_update")
         if prior_update is not None:

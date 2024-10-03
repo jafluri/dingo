@@ -169,6 +169,7 @@ class GWSignal(object):
 
         return self.projection_transforms(sample)
 
+
     # It would be good to have an ASD class to handle all of this functionality,
     # namely storing ASDs from numpy arrays, from ASDDatasets, loading from files,
     # etc. For now this functionality is partially implemented here.

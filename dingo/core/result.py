@@ -206,7 +206,7 @@ class Result(DingoDataset):
         else:
             return None
 
-    def importance_sample(self, num_processes: int = 1, **likelihood_kwargs):
+    def importance_sample(self, num_processes: int = 1, multi_source: dict | None = None, **likelihood_kwargs):
         """
         Calculate importance weights for samples.
 
@@ -237,6 +237,9 @@ class Result(DingoDataset):
         num_processes : int
             Number of parallel processes to use when calculating likelihoods. (This is
             the most expensive task.)
+        multi_source : dict
+            Dictionary containing the settings for the multi-source model (source_name: delta_t).
+            If None, only the single source model is used. Currently delta_t can't be infered from the data.
         likelihood_kwargs : dict
             kwargs that are forwarded to the likelihood constructor. E.g., options for
             marginalization.
@@ -259,33 +262,82 @@ class Result(DingoDataset):
         else:
             delta_log_prob_target = 0.0
 
-        # select parameters in self.samples (required as log_prob and potentially gnpe
-        # proxies are also stored in self.samples, but are not needed for the likelihood.
-        # TODO: replace by self.metadata["train_settings"]["data"]["inference_parameters"]
-        param_keys = [k for k, v in self.prior.items() if not isinstance(v, Constraint)]
-        param_keys_inference = [k for k in param_keys if k in self.samples.keys()]
-        theta = self.samples[param_keys_inference]
-        # TODO: Theta might not contain all parameters. Does ln_prob still do the right thing? Looks like it but pls
-        #  check!
+        source_dict = {"": 0}
+        if multi_source is not None:
+            source_dict.update(multi_source)
 
-        # Calculate the (un-normalized) target density as prior times likelihood,
-        # evaluated at the same sample points.
-        log_prior = self.prior.ln_prob(theta, axis=0)
+        # accumulate the likelihoods for all sources
+        log_prior = np.zeros(len(self.samples))
+        thetas = {}
+        for source, delta_t in source_dict.items():
+            if source != "":
+                source = f"_{source}"
+            # select parameters in self.samples (required as log_prob and potentially gnpe
+            # proxies are also stored in self.samples, but are not needed for the likelihood.
+            # TODO: replace by self.metadata["train_settings"]["data"]["inference_parameters"]
+            param_keys = [k for k, v in self.prior.items() if not isinstance(v, Constraint)]
+
+            # if we have multiple sources we add them as well
+            param_keys_inference = [f"{k}{source}" for k in param_keys if k in self.samples.keys()]
+            theta = self.samples[param_keys_inference].copy()
+            theta.columns = [k for k in param_keys if k in self.samples.keys()]
+
+            # we add the fixed parameters to the likelihood evaluation
+            for param_key in param_keys:
+                if param_key not in self.samples.keys():
+                    if isinstance(self.prior[param_key], DeltaFunction):
+                        theta.loc[:, param_key] = self.prior[param_key].peak
+                    else:
+                        print(f"Warning: Parameter {param_key} is not a DeltaFunction, setting value to 0")
+                        theta.loc[:, param_key] = 0
+
+            # Calculate the (un-normalized) target density as prior times likelihood,
+            # evaluated at the same sample points.
+            log_prior += self.prior.ln_prob(theta, axis=0)
+
+            # add the phase this has to happen here because the phase is not part of the prior
+            if isinstance(self.phase_prior, DeltaFunction):
+                print("Adding phase to the likelihood evaluation.")
+                theta.loc[:, "phase"] = self.phase_prior.peak
+
+            # copy the thetas to the thetas dict
+            thetas[source] = theta.copy()
+            if source != "":
+                thetas[source].loc[:, "delta_t"] = delta_t
+                thetas[source].loc[:, "geocent_time"] = delta_t
+            else:
+                thetas[source].loc[:, "geocent_time"] = 0
 
         # The prior or delta_log_prob_target may be -inf for certain samples.
         # For these, we do not want to evaluate the likelihood, in particular because
         # it may not even be possible to generate signals outside the prior (e.g.,
         # for BH spins > 1).
         valid_samples = (log_prior + delta_log_prob_target) != -np.inf
-        theta = theta.iloc[valid_samples]
+        thetas = {k: v.iloc[valid_samples] for k, v in thetas.items()}
+
+        # build the generator
+        if len(thetas) == 1:
+            theta_generator = (d[1].to_dict() for d in thetas[""].iterrows())
+        else:
+            def generator():
+                for i in range(len(thetas[""])):
+                    current = {}
+                    for source, params in thetas.items():
+                        current[source] = params.iloc[i].to_dict()
+                    yield current
+            theta_generator = generator()
+
         # TODO We now add fixed parameters to the likelihood by checking which parameters received a delta prior.
         # TODO this should be replaced by a less hacky solution. Adding fixed_parameter_keys is not sufficient
         # TODO because, e.g., the phase is then still missing.
         # theta = self.add_fixed_parameters(theta)
-        print(f"Calculating {len(theta)} likelihoods.")
+        print(f"Calculating {sum(valid_samples)} likelihoods.")
         t0 = time.time()
+
+        self.likelihood.log_likelihood(theta_generator.__next__())
+        return
         log_likelihood = self.likelihood.log_likelihood_multi(
-            theta, num_processes=num_processes
+            theta=None, num_processes=num_processes, theta_generator=theta_generator
         )
         print(f"Done. This took {time.time() - t0:.2f} seconds.")
 
