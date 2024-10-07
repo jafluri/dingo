@@ -291,8 +291,6 @@ class StationaryGaussianGWLikelihood(MultiSourceInjection, Likelihood):
             ],
         )
 
-        print(self.log_Zn, kappa2 - 1 / 2.0 * rho2opt)
-
         likelihood = self.log_Zn + kappa2 - 1 / 2.0 * rho2opt
         return likelihood
 

@@ -333,9 +333,6 @@ class Result(DingoDataset):
         # theta = self.add_fixed_parameters(theta)
         print(f"Calculating {sum(valid_samples)} likelihoods.")
         t0 = time.time()
-
-        self.likelihood.log_likelihood(theta_generator.__next__())
-        return
         log_likelihood = self.likelihood.log_likelihood_multi(
             theta=None, num_processes=num_processes, theta_generator=theta_generator
         )

@@ -185,7 +185,6 @@ class Result(CoreResult):
             self.base_metadata["train_settings"]["data"]["extrinsic_prior"]
         )
         full_prior = {**intrinsic_prior, **extrinsic_prior}
-        print("full_prior", full_prior)
         self.prior = build_prior_with_defaults(full_prior)
 
         prior_update = self.importance_sampling_metadata.get("prior_update")
