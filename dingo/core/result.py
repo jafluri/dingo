@@ -206,6 +206,125 @@ class Result(DingoDataset):
         else:
             return None
 
+    def prep_samples_for_likelihood(self, samples, multi_source=None, ignore_warnings=False):
+        """
+        Prepare Theta samples for likelihood evaluation. This includes adding fixed
+        Parameters
+        ----------
+        samples A pandas DataFrame of samples with columns as parameter names.
+
+        Returns
+        -------
+        The prior and sample dictionary.
+        """
+
+        source_dict = {"": 0}
+        if multi_source is not None:
+            source_dict.update(multi_source)
+
+        # accumulate the likelihoods for all sources
+        log_prior = np.zeros(len(samples))
+        thetas = {}
+        for source, delta_t in source_dict.items():
+            if source != "":
+                source = f"_{source}"
+            # select parameters in self.samples (required as log_prob and potentially gnpe
+            # proxies are also stored in self.samples, but are not needed for the likelihood.
+            # TODO: replace by self.metadata["train_settings"]["data"]["inference_parameters"]
+            param_keys = [k for k, v in self.prior.items() if not isinstance(v, Constraint)]
+
+            # if we have multiple sources we add them as well
+            param_keys_inference = [f"{k}{source}" for k in param_keys if k in samples.keys()]
+            theta = samples[param_keys_inference].copy()
+            theta.columns = [k for k in param_keys if k in samples.keys()]
+
+            # we add the fixed parameters to the likelihood evaluation
+            for param_key in param_keys:
+                if param_key not in samples.keys():
+                    if isinstance(self.prior[param_key], DeltaFunction):
+                        theta.loc[:, param_key] = self.prior[param_key].peak
+                    else:
+                        if not ignore_warnings:
+                            print(f"Warning: Parameter {param_key} is not a DeltaFunction, setting value to 0")
+                        theta.loc[:, param_key] = 0
+
+            # Calculate the (un-normalized) target density as prior times likelihood,
+            # evaluated at the same sample points.
+            log_prior += self.prior.ln_prob(theta, axis=0)
+
+            # add the phase this has to happen here because the phase is not part of the prior
+            if isinstance(self.phase_prior, DeltaFunction):
+                if not ignore_warnings:
+                    print("Adding phase to the likelihood evaluation.")
+                theta.loc[:, "phase"] = self.phase_prior.peak
+
+            # copy the thetas to the thetas dict
+            thetas[source] = theta.copy()
+            if source != "":
+                thetas[source].loc[:, "delta_t"] = delta_t
+                thetas[source].loc[:, "geocent_time"] = delta_t
+            else:
+                thetas[source].loc[:, "geocent_time"] = 0
+
+        return thetas, log_prior
+
+    def log_likelihood(self, theta, num_processes=1):
+        """
+        This function can be run in an MCMC, theta is a 2D numpy array where the parameters are in the
+        same order as in the samples DataFrame. The function returns the log likelihood for each sample.
+        Parameters
+        ----------
+        theta : np.array
+            2D numpy array of parameters
+
+        Returns
+        -------
+        np.array
+            log likelihoods
+        """
+
+        # create a data frame of samples
+        cols = list(self.samples.columns)
+        drop_cols = ["log_prob", "log_prior", "log_likelihood", "weights"]
+        cols = [c for c in cols if c not in drop_cols]
+        samples = pd.DataFrame(theta, columns=cols)
+
+        multi_source = None
+        if "parameters" in self.context:
+            multi_source = {}
+            for source, delta_t in self.context["parameters"].items():
+                multi_source[source.replace("delta_t_", "")] = delta_t
+
+        # prepare the samples for the likelihood evaluation
+        thetas, log_prior = self.prep_samples_for_likelihood(samples, multi_source, ignore_warnings=True)
+
+        # get the valid samples
+        valid_samples = log_prior != -np.inf
+        thetas = {k: v.iloc[valid_samples] for k, v in thetas.items()}
+
+        # build the generator
+        if len(thetas) == 1:
+            theta_generator = (d[1].to_dict() for d in thetas[""].iterrows())
+        else:
+            def generator():
+                for i in range(len(thetas[""])):
+                    current = {}
+                    for source, params in thetas.items():
+                        current[source] = params.iloc[i].to_dict()
+                    yield current
+            theta_generator = generator()
+
+        # calculate the log likelihood
+        log_likelihood = self.likelihood.log_likelihood_multi(
+            theta=None, num_processes=num_processes, theta_generator=theta_generator
+        )
+
+        # add the log likelihood to the samples
+        samples["log_likelihood"] = -np.inf
+        samples.loc[valid_samples, "log_likelihood"] = log_likelihood
+
+        return samples["log_likelihood"].to_numpy()
+
     def importance_sample(self, num_processes: int = 1, multi_source: dict | None = None, **likelihood_kwargs):
         """
         Calculate importance weights for samples.
@@ -262,51 +381,8 @@ class Result(DingoDataset):
         else:
             delta_log_prob_target = 0.0
 
-        source_dict = {"": 0}
-        if multi_source is not None:
-            source_dict.update(multi_source)
-
-        # accumulate the likelihoods for all sources
-        log_prior = np.zeros(len(self.samples))
-        thetas = {}
-        for source, delta_t in source_dict.items():
-            if source != "":
-                source = f"_{source}"
-            # select parameters in self.samples (required as log_prob and potentially gnpe
-            # proxies are also stored in self.samples, but are not needed for the likelihood.
-            # TODO: replace by self.metadata["train_settings"]["data"]["inference_parameters"]
-            param_keys = [k for k, v in self.prior.items() if not isinstance(v, Constraint)]
-
-            # if we have multiple sources we add them as well
-            param_keys_inference = [f"{k}{source}" for k in param_keys if k in self.samples.keys()]
-            theta = self.samples[param_keys_inference].copy()
-            theta.columns = [k for k in param_keys if k in self.samples.keys()]
-
-            # we add the fixed parameters to the likelihood evaluation
-            for param_key in param_keys:
-                if param_key not in self.samples.keys():
-                    if isinstance(self.prior[param_key], DeltaFunction):
-                        theta.loc[:, param_key] = self.prior[param_key].peak
-                    else:
-                        print(f"Warning: Parameter {param_key} is not a DeltaFunction, setting value to 0")
-                        theta.loc[:, param_key] = 0
-
-            # Calculate the (un-normalized) target density as prior times likelihood,
-            # evaluated at the same sample points.
-            log_prior += self.prior.ln_prob(theta, axis=0)
-
-            # add the phase this has to happen here because the phase is not part of the prior
-            if isinstance(self.phase_prior, DeltaFunction):
-                print("Adding phase to the likelihood evaluation.")
-                theta.loc[:, "phase"] = self.phase_prior.peak
-
-            # copy the thetas to the thetas dict
-            thetas[source] = theta.copy()
-            if source != "":
-                thetas[source].loc[:, "delta_t"] = delta_t
-                thetas[source].loc[:, "geocent_time"] = delta_t
-            else:
-                thetas[source].loc[:, "geocent_time"] = 0
+        # prep samples for likelihood evaluation
+        thetas, log_prior = self.prep_samples_for_likelihood(self.samples, multi_source)
 
         # The prior or delta_log_prob_target may be -inf for certain samples.
         # For these, we do not want to evaluate the likelihood, in particular because
