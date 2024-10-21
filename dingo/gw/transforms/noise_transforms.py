@@ -227,8 +227,8 @@ class RepackageStrainsAndASDS(object):
                 strains[idx_ifo, 2*source_num + 0] = waveform[self.first_index :].real
                 strains[idx_ifo, 2*source_num + 1] = waveform[self.first_index :].imag
             # FIXME: This is just because of the old checkpoints
-            #strains[idx_ifo, -1] = 1 / (sample["asds"][ifo][self.first_index:] * 1e23)
-            strains[idx_ifo, -1] = delta_t
+            strains[idx_ifo, -1] = 1 / (sample["asds"][ifo][self.first_index:] * 1e23)
+            #strains[idx_ifo, -1] = delta_t
 
         sample["waveform"] = strains
         return sample
