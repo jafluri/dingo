@@ -339,13 +339,6 @@ def create_nsf_with_rb_projection_embedding_net(
     # save the embedding_kwargs with the huge V_rb_list included. This is a bit of
     # a hack; improve setting of initial weights later.
 
-    embedding_kwargs = copy.deepcopy(embedding_kwargs)
-
-    if initial_weights is not None:
-        embedding_kwargs["V_rb_list"] = initial_weights["V_rb_list"]
-    elif "V_rb_list" not in embedding_kwargs:
-        embedding_kwargs["V_rb_list"] = None
-
     context_embedding_kwargs = copy.deepcopy(embedding_kwargs)
     embedding_type = embedding_kwargs.get("network_type", "dense_resnet")
     # remove network_type from context_embedding_kwargs
@@ -353,6 +346,11 @@ def create_nsf_with_rb_projection_embedding_net(
         del context_embedding_kwargs["network_type"]
 
     if embedding_type == "dense_resnet":
+        if initial_weights is not None:
+            context_embedding_kwargs["V_rb_list"] = initial_weights["V_rb_list"]
+        elif "V_rb_list" not in context_embedding_kwargs:
+            context_embedding_kwargs["V_rb_list"] = None
+
         embedding_net = create_enet_with_projection_layer_and_dense_resnet(
             **context_embedding_kwargs
         )
