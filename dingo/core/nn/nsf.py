@@ -10,7 +10,7 @@ import glasflow.nflows as nflows  # nflows not maintained, so use this maintaine
 from glasflow.nflows import distributions, flows, transforms
 import glasflow.nflows.nn.nets as nflows_nets
 from dingo.core.utils import torchutils
-from dingo.core.nn.enets import create_enet_with_projection_layer_and_dense_resnet
+from dingo.core.nn.enets import create_enet_with_projection_layer_and_dense_resnet, create_enet_with_conv_resnet
 from typing import Union, Callable, Tuple
 
 
@@ -340,14 +340,26 @@ def create_nsf_with_rb_projection_embedding_net(
     # a hack; improve setting of initial weights later.
 
     embedding_kwargs = copy.deepcopy(embedding_kwargs)
+
     if initial_weights is not None:
         embedding_kwargs["V_rb_list"] = initial_weights["V_rb_list"]
     elif "V_rb_list" not in embedding_kwargs:
         embedding_kwargs["V_rb_list"] = None
 
-    embedding_net = create_enet_with_projection_layer_and_dense_resnet(
-        **embedding_kwargs
-    )
+    context_embedding_kwargs = copy.deepcopy(embedding_kwargs)
+    embedding_type = embedding_kwargs.get("network_type", "dense_resnet")
+    # remove network_type from context_embedding_kwargs
+    if "network_type" in context_embedding_kwargs:
+        del context_embedding_kwargs["network_type"]
+
+    if embedding_type == "dense_resnet":
+        embedding_net = create_enet_with_projection_layer_and_dense_resnet(
+            **context_embedding_kwargs
+        )
+    elif embedding_type == "conv_resnet":
+        embedding_net = create_enet_with_conv_resnet(**context_embedding_kwargs)
+    else:
+        raise ValueError(f"Unknown embedding network type: {embedding_type}")
     flow = create_nsf_model(**posterior_kwargs)
     model = FlowWrapper(flow, embedding_net)
     return model
