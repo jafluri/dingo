@@ -248,9 +248,15 @@ class Result(DingoDataset):
                             print(f"Warning: Parameter {param_key} is not a DeltaFunction, setting value to 0")
                         theta.loc[:, param_key] = 0
 
+            # handle the geocent_time
+            gc_key = f"geocent_time{source}"
+            theta_prior = theta.copy()
+            if gc_key in theta.columns:
+                theta_prior.loc[:, gc_key] -= delta_t
+
             # Calculate the (un-normalized) target density as prior times likelihood,
             # evaluated at the same sample points.
-            log_prior += self.prior.ln_prob(theta, axis=0)
+            log_prior += self.prior.ln_prob(theta_prior, axis=0)
 
             # add the phase this has to happen here because the phase is not part of the prior
             if isinstance(self.phase_prior, DeltaFunction):
