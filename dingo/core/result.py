@@ -249,10 +249,9 @@ class Result(DingoDataset):
                         theta.loc[:, param_key] = 0
 
             # handle the geocent_time
-            gc_key = f"geocent_time{source}"
             theta_prior = theta.copy()
-            if gc_key in theta.columns:
-                theta_prior.loc[:, gc_key] -= delta_t
+            if "geocent_time" in theta.columns:
+                theta_prior.loc[:, "geocent_time"] -= delta_t
 
             # Calculate the (un-normalized) target density as prior times likelihood,
             # evaluated at the same sample points.
@@ -264,13 +263,12 @@ class Result(DingoDataset):
                     print("Adding phase to the likelihood evaluation.")
                 theta.loc[:, "phase"] = self.phase_prior.peak
 
-            # copy the thetas to the thetas dict
+            # copy the thetas to the thetas dictionary
             thetas[source] = theta.copy()
+            if "geocent_time" not in thetas[source].columns:
+                thetas[source].loc[:, "geocent_time"] = delta_t
             if source != "":
                 thetas[source].loc[:, "delta_t"] = delta_t
-                thetas[source].loc[:, "geocent_time"] = delta_t
-            else:
-                thetas[source].loc[:, "geocent_time"] = 0
 
         return thetas, log_prior
 
