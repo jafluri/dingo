@@ -8,13 +8,12 @@ from bilby.gw.utils import ln_i0
 from threadpoolctl import threadpool_limits
 
 from dingo.core.likelihood import Likelihood
-from dingo.gw.injection import MultiSourceInjection
+from dingo.gw.injection import MultiSourceInjection, GWSignal
 from dingo.gw.waveform_generator import WaveformGenerator
 from dingo.gw.domains import build_domain
 from dingo.gw.data.data_preparation import get_event_data_and_domain
 
-# FIXME: This is a temporary fix to allow multi source, but should be able to handle both single and multi source
-class StationaryGaussianGWLikelihood(MultiSourceInjection, Likelihood):
+class BaseStationaryGaussianGWLikelihood(Likelihood):
     """
     Implements GW likelihood for stationary, Gaussian noise.
     """
@@ -677,6 +676,239 @@ def inner_product(a, b, min_idx=0, delta_f=None, psd=None):
         return 4 * delta_f * np.sum((a.conj() * b / psd)[min_idx:], axis=0).real
     else:
         return np.sum((a.conj() * b)[min_idx:], axis=0).real
+
+
+class MultiStationaryGaussianGWLikelihood(MultiSourceInjection, BaseStationaryGaussianGWLikelihood):
+    """
+    Implements GW likelihood for stationary, Gaussian noise.
+    """
+
+    def __init__(
+        self,
+        wfg_kwargs,
+        wfg_domain,
+        data_domain,
+        event_data,
+        t_ref=None,
+        time_marginalization_kwargs=None,
+        phase_marginalization_kwargs=None,
+        calibration_marginalization_kwargs=None,
+        phase_grid=None,
+    ):
+        # TODO: Does the phase_grid argument ever get used?
+        """
+        Parameters
+        ----------
+        wfg_kwargs: dict
+            Waveform generator parameters (at least approximant and f_ref).
+        wfg_domain : dingo.gw.domains.Domain
+            Domain used for waveform generation. This can potentially deviate from the
+            final domain, having a wider frequency range needed for waveform generation.
+        data_domain: dingo.gw.domains.Domain
+            Domain object for event data.
+        event_data: dict
+            GW data. Contains strain data in event_data["waveforms"] and asds in
+            event_data["asds"].
+        t_ref: float
+            Reference time; true geocent time for GW is t_ref + theta["geocent_time"].
+        time_marginalization_kwargs: dict
+            Time marginalization parameters. If None, no time marginalization is used.
+        calibration_marginalization_kwargs: dict
+            Calibration marginalization parameters. If None, no calibration marginalization is used.
+        phase_marginalization_kwargs: dict
+            Phase marginalization parameters. If None, no phase marginalization is used.
+        """
+        super().__init__(
+            wfg_kwargs=wfg_kwargs,
+            wfg_domain=wfg_domain,
+            data_domain=data_domain,
+            ifo_list=list(event_data["waveform"].keys()),
+            t_ref=t_ref,
+            # FIXME: This is a quick hack to avoid changing the likelihood class
+            prior=None
+        )
+
+        self.asd = event_data["asds"]
+
+        self.whitened_strains = {
+            k: v / self.asd[k] / self.data_domain.noise_std
+            for k, v in event_data["waveform"].items()
+        }
+        if len(list(self.whitened_strains.values())[0]) != data_domain.max_idx + 1:
+            raise ValueError("Strain data does not match domain.")
+        # log noise evidence, independent of theta and waveform model
+        self.log_Zn = sum(
+            [
+                -1 / 2.0 * inner_product(d_ifo, d_ifo)
+                for d_ifo in self.whitened_strains.values()
+            ]
+        )
+        # For completeness (not used): there is a PSD-dependent contribution to the
+        # likelihood,  which is typically ignored as it is constant for a given PSD
+        # (e.g.,  for different waveform models) or event strains. Intuitively it is the
+        # correction term that needs to be added to the log-likelihood to account
+        # for the fact we compute N[0,1](strain/ASD) instead of N[0,ASD^2](strain).
+        # But this contribution is typically ignored since we are only interested in
+        # log-likelihood *differences*, see e.g. https://arxiv.org/pdf/1809.02293.pdf.
+        # psi = - sum_i log(2pi * PSD_i) = - 2 * sum_i * log(2pi * ASD_i)
+        # self.psi = -2 * sum(
+        #     np.sum(np.log(2 * np.pi * asd)) for asd in self.asd.values()
+        # )
+
+        # Value in Veitch et al (2015)
+        self.psi = -2 * np.sum(
+            [
+                np.sum(np.log(np.sqrt(2 * np.pi) * asd * self.data_domain.noise_std))
+                for asd in self.asd.values()
+            ]
+        )
+        self.whiten = True
+        self.phase_grid = phase_grid
+
+        # optionally initialize time marginalization
+        self.time_marginalization = False
+        if time_marginalization_kwargs is not None:
+            self.initialize_time_marginalization(**time_marginalization_kwargs)
+
+        # optionally initialize phase marginalization
+        self.phase_marginalization = False
+        if phase_marginalization_kwargs is not None:
+            self.phase_marginalization = True
+            # flag whether to use exp(2i * phi) approximation for phase transformations
+            self.pm_approx_22_mode = phase_marginalization_kwargs.get(
+                "approximation_22_mode", True
+            )
+            # if we don't use the exp(2i * phase) approximation, we need a phase grid
+            if not self.pm_approx_22_mode:
+                n_grid = phase_marginalization_kwargs.get("n_grid", 1_000)
+                # use endpoint = False for grid, since phase = 0/2pi are equivalent
+                self.phase_grid = np.linspace(0, 2 * np.pi, n_grid, endpoint=False)
+            else:
+                print("Using phase marginalization with (2,2) mode approximation.")
+
+        # optionally initialize calibration marginalization
+        self.calibration_marginalization = False
+        if calibration_marginalization_kwargs is not None:
+            self.calibration_marginalization = True
+            self.initialize_calibration_marginalization(
+                **calibration_marginalization_kwargs
+            )
+
+
+class StationaryGaussianGWLikelihood(GWSignal, BaseStationaryGaussianGWLikelihood):
+    """
+    Implements GW likelihood for stationary, Gaussian noise.
+    """
+
+    def __init__(
+        self,
+        wfg_kwargs,
+        wfg_domain,
+        data_domain,
+        event_data,
+        t_ref=None,
+        time_marginalization_kwargs=None,
+        phase_marginalization_kwargs=None,
+        calibration_marginalization_kwargs=None,
+        phase_grid=None,
+    ):
+        # TODO: Does the phase_grid argument ever get used?
+        """
+        Parameters
+        ----------
+        wfg_kwargs: dict
+            Waveform generator parameters (at least approximant and f_ref).
+        wfg_domain : dingo.gw.domains.Domain
+            Domain used for waveform generation. This can potentially deviate from the
+            final domain, having a wider frequency range needed for waveform generation.
+        data_domain: dingo.gw.domains.Domain
+            Domain object for event data.
+        event_data: dict
+            GW data. Contains strain data in event_data["waveforms"] and asds in
+            event_data["asds"].
+        t_ref: float
+            Reference time; true geocent time for GW is t_ref + theta["geocent_time"].
+        time_marginalization_kwargs: dict
+            Time marginalization parameters. If None, no time marginalization is used.
+        calibration_marginalization_kwargs: dict
+            Calibration marginalization parameters. If None, no calibration marginalization is used.
+        phase_marginalization_kwargs: dict
+            Phase marginalization parameters. If None, no phase marginalization is used.
+        """
+        super().__init__(
+            wfg_kwargs=wfg_kwargs,
+            wfg_domain=wfg_domain,
+            data_domain=data_domain,
+            ifo_list=list(event_data["waveform"].keys()),
+            t_ref=t_ref,
+        )
+
+        self.asd = event_data["asds"]
+
+        self.whitened_strains = {
+            k: v / self.asd[k] / self.data_domain.noise_std
+            for k, v in event_data["waveform"].items()
+        }
+        if len(list(self.whitened_strains.values())[0]) != data_domain.max_idx + 1:
+            raise ValueError("Strain data does not match domain.")
+        # log noise evidence, independent of theta and waveform model
+        self.log_Zn = sum(
+            [
+                -1 / 2.0 * inner_product(d_ifo, d_ifo)
+                for d_ifo in self.whitened_strains.values()
+            ]
+        )
+        # For completeness (not used): there is a PSD-dependent contribution to the
+        # likelihood,  which is typically ignored as it is constant for a given PSD
+        # (e.g.,  for different waveform models) or event strains. Intuitively it is the
+        # correction term that needs to be added to the log-likelihood to account
+        # for the fact we compute N[0,1](strain/ASD) instead of N[0,ASD^2](strain).
+        # But this contribution is typically ignored since we are only interested in
+        # log-likelihood *differences*, see e.g. https://arxiv.org/pdf/1809.02293.pdf.
+        # psi = - sum_i log(2pi * PSD_i) = - 2 * sum_i * log(2pi * ASD_i)
+        # self.psi = -2 * sum(
+        #     np.sum(np.log(2 * np.pi * asd)) for asd in self.asd.values()
+        # )
+
+        # Value in Veitch et al (2015)
+        self.psi = -2 * np.sum(
+            [
+                np.sum(np.log(np.sqrt(2 * np.pi) * asd * self.data_domain.noise_std))
+                for asd in self.asd.values()
+            ]
+        )
+        self.whiten = True
+        self.phase_grid = phase_grid
+
+        # optionally initialize time marginalization
+        self.time_marginalization = False
+        if time_marginalization_kwargs is not None:
+            self.initialize_time_marginalization(**time_marginalization_kwargs)
+
+        # optionally initialize phase marginalization
+        self.phase_marginalization = False
+        if phase_marginalization_kwargs is not None:
+            self.phase_marginalization = True
+            # flag whether to use exp(2i * phi) approximation for phase transformations
+            self.pm_approx_22_mode = phase_marginalization_kwargs.get(
+                "approximation_22_mode", True
+            )
+            # if we don't use the exp(2i * phase) approximation, we need a phase grid
+            if not self.pm_approx_22_mode:
+                n_grid = phase_marginalization_kwargs.get("n_grid", 1_000)
+                # use endpoint = False for grid, since phase = 0/2pi are equivalent
+                self.phase_grid = np.linspace(0, 2 * np.pi, n_grid, endpoint=False)
+            else:
+                print("Using phase marginalization with (2,2) mode approximation.")
+
+        # optionally initialize calibration marginalization
+        self.calibration_marginalization = False
+        if calibration_marginalization_kwargs is not None:
+            self.calibration_marginalization = True
+            self.initialize_calibration_marginalization(
+                **calibration_marginalization_kwargs
+            )
+
 
 
 def inner_product_complex(a, b, min_idx=0, delta_f=None, psd=None):

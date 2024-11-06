@@ -15,7 +15,7 @@ from dingo.core.result import Result as CoreResult
 from dingo.gw.conversion import change_spin_conversion_phase
 from dingo.gw.domains import build_domain
 from dingo.gw.gwutils import get_extrinsic_prior_dict, get_window_factor
-from dingo.gw.likelihood import StationaryGaussianGWLikelihood
+from dingo.gw.likelihood import StationaryGaussianGWLikelihood, MultiStationaryGaussianGWLikelihood
 from dingo.gw.prior import build_prior_with_defaults
 
 
@@ -264,6 +264,7 @@ class Result(CoreResult):
         phase_marginalization_kwargs: Optional[dict] = None,
         calibration_marginalization_kwargs: Optional[dict] = None,
         phase_grid: Optional[np.ndarray] = None,
+        multi_source: bool = False,
     ):
         """
         Build the likelihood function based on model metadata. This is called at the
@@ -319,17 +320,31 @@ class Result(CoreResult):
         else:
             wfg_domain = self.domain
 
-        self.likelihood = StationaryGaussianGWLikelihood(
-            wfg_kwargs=self.base_metadata["dataset_settings"]["waveform_generator"],
-            wfg_domain=wfg_domain,
-            data_domain=self.domain,
-            event_data=self.context,
-            t_ref=self.t_ref,
-            time_marginalization_kwargs=time_marginalization_kwargs,
-            phase_marginalization_kwargs=phase_marginalization_kwargs,
-            calibration_marginalization_kwargs=calibration_marginalization_kwargs,
-            phase_grid=phase_grid,
-        )
+        if not multi_source:
+            self.likelihood = StationaryGaussianGWLikelihood(
+                wfg_kwargs=self.base_metadata["dataset_settings"]["waveform_generator"],
+                wfg_domain=wfg_domain,
+                data_domain=self.domain,
+                event_data=self.context,
+                t_ref=self.t_ref,
+                time_marginalization_kwargs=time_marginalization_kwargs,
+                phase_marginalization_kwargs=phase_marginalization_kwargs,
+                calibration_marginalization_kwargs=calibration_marginalization_kwargs,
+                phase_grid=phase_grid,
+            )
+        else:
+            self.likelihood = MultiStationaryGaussianGWLikelihood(
+                wfg_kwargs=self.base_metadata["dataset_settings"]["waveform_generator"],
+                wfg_domain=wfg_domain,
+                data_domain=self.domain,
+                event_data=self.context,
+                t_ref=self.t_ref,
+                time_marginalization_kwargs=time_marginalization_kwargs,
+                phase_marginalization_kwargs=phase_marginalization_kwargs,
+                calibration_marginalization_kwargs=calibration_marginalization_kwargs,
+                phase_grid=phase_grid,
+            )
+
 
     def sample_synthetic_phase(
         self,
@@ -418,10 +433,6 @@ class Result(CoreResult):
 
         print(f"Estimating synthetic phase for {num_valid_samples} samples.")
         t0 = time.time()
-
-        if not inverse:
-            # TODO: This can probably be removed.
-            self._build_likelihood()
 
         if inverse:
             # We estimate the log_prob for given phases, so first save the evaluation
