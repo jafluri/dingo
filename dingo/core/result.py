@@ -378,7 +378,7 @@ class Result(DingoDataset):
                 "samples. This can then be sampled with log probability."
             )
 
-        self._build_likelihood(**likelihood_kwargs)
+        self._build_likelihood(**likelihood_kwargs, multi_source=multi_source)
 
         if "delta_log_prob_target" in self.samples.columns:
             delta_log_prob_target = self.samples["delta_log_prob_target"].to_numpy()
